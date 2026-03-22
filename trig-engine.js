@@ -659,8 +659,10 @@ function validateEquivalence(oldExpr, newExpr) {
     try {
         const codeOld = math.compile(oldExpr);
         const codeNew = math.compile(newExpr);
+        // Test points with a slight irrational offset (0.12345) to avoid 
+        // hitting exact singularities like pi/2 (where cos=0) or 3pi/2.
         for (let k = -12; k <= 12; k++) {
-            const theta = k * Math.PI / 6;
+            const theta = k * Math.PI / 6 + 0.12345;
             if (!checkPointValid(codeOld, codeNew, theta)) return false;
         }
         return true;
