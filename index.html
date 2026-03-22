@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quantum Trig Solver</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/11.8.0/math.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/nerdamer@1.1.13/nerdamer.core.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/nerdamer@1.1.13/Algebra.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/nerdamer@1.1.13/Calculus.js"></script>
+    <script src="trig-engine.js"></script>
+    <script src="levels.js"></script>
+    <link
+        href="https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;600&family=Orbitron:wght@500;700;900&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --bg-deep: #05050a;
+            --glass-bg: rgba(15, 20, 35, .65);
+            --glass-border: rgba(0, 243, 255, .2);
+            --neon-blue: #00f3ff;
+            --neon-pink: #ff00ea;
+            --neon-green: #39ff14;
+            --neon-red: #ff003c;
+            --neon-amber: #f59e0b;
+            --text-main: #e2e8f0
+        }
+
+        * {
+            box-sizing: border-box
+        }
+
+        body {
+            font-family: 'Fira Code', monospace;
+            background: var(--bg-deep);
+            color: var(--text-main);
+            margin: 0;
+            display: flex;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .grid-bg {
+            position: absolute;
+            width: 200%;
+            height: 200%;
+            top: -50%;
+            left: -50%;
+            background-image: linear-gradient(var(--glass-border) 1px, transparent 1px), linear-gradient(90deg, var(--glass-border) 1px, transparent 1px);
+            background-size: 50px 50px;
+            transform: perspective(600px) rotateX(60deg);
+            animation: moveGrid 20s linear infinite;
+            z-index: -1;
+            opacity: .3
+        }
+
+        @keyframes moveGrid {
+            0% {
+                transform: perspective(600px) rotateX(60deg) translateY(0)
+            }
+
+            100% {
+                transform: perspective(600px) rotateX(60deg) translateY(50px)
+            }
+        }
+
+        .sidebar {
+            width: 370px;
+            height: 100vh;
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            border-right: 1px solid var(--glass-border);
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            z-index: 10;
+            box-shadow: 5px 0 20px rgba(0, 0, 0, .5);
+            overflow-y: scroll
+        }
+
+        .main {
+            flex: 1;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            position: relative;
+            z-index: 10;
+            overflow-x: hidden;
+        }
+
+        .header {
+            padding: 20px 30px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--glass-border);
+            display: flex;
+            gap: 20px;
+            align-items: center
+        }
+
+        #workspace {
+            padding: 25px;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+            gap: 25px
+        }
+
+        h2 {
+            font-family: 'Orbitron', sans-serif;
+            color: var(--neon-blue);
+            margin: 0 0 8px 0;
+            text-shadow: 0 0 10px rgba(0, 243, 255, .4)
+        }
+
+        .cat-title {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 11px;
+            color: var(--neon-pink);
+            letter-spacing: 2px;
+            padding: 8px 0 4px;
+            cursor: pointer;
+            user-select: none;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            text-transform: uppercase
+        }
+
+        .cat-title .arrow {
+            transition: transform .2s;
+            font-size: 10px
+        }
+
+        .cat-title.collapsed .arrow {
+            transform: rotate(-90deg)
+        }
+
+        .cat-body {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            overflow: hidden;
+            transition: max-height .3s ease
+        }
+
+        .cat-body.collapsed {
+            max-height: 0 !important;
+            overflow: hidden
+        }
+
+        input.glass-input, textarea.glass-input {
+            background: rgba(0, 0, 0, .4);
+            border: 1px solid var(--glass-border);
+            color: var(--neon-blue);
+            padding: 10px 15px;
+            font-family: 'Fira Code', monospace;
+            border-radius: 4px;
+            outline: 0;
+            transition: all .3s;
+            resize: none;
+        }
+
+        input.glass-input:focus, textarea.glass-input:focus {
+            border-color: var(--neon-blue);
+            box-shadow: 0 0 10px rgba(0, 243, 255, .3)
+        }
+
+        .btn {
+            background: 0 0;
+            color: var(--neon-blue);
+            border: 1px solid var(--neon-blue);
+            padding: 10px 20px;
+            font-family: 'Orbitron', sans-serif;
+            font-weight: 700;
+            border-radius: 4px;
+            cursor: pointer;
+            text-transform: uppercase;
+            transition: all .2s;
+            box-shadow: 0 0 5px rgba(0, 243, 255, .1) inset
+        }
+
+        .btn:hover {
+            background: var(--neon-blue);
+            color: #000;
+            box-shadow: 0 0 15px var(--neon-blue)
+        }
+
+        .timer {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 28px;
+            color: var(--neon-pink);
+            margin-left: auto;
+            text-shadow: 0 0 10px rgba(255, 0, 234, .5);
+            font-weight: 900
+        }
+
+        .step {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            background: rgba(0, 0, 0, .4);
+            padding: 20px;
+            border-radius: 8px;
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(5px);
+            transition: all .3s
+        }
+
+        .step:last-child {
+            border-color: var(--neon-blue);
+            box-shadow: 0 0 20px rgba(0, 243, 255, .1)
+        }
+
+        .side {
+            flex: 1;
+            min-height: 60px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            align-items: center;
+            padding: 12px;
+            border-radius: 6px;
+            border: 2px dashed rgba(255, 255, 255, .1);
+            background: rgba(0, 0, 0, .2);
+            transition: all .2s
+        }
+
+        .side.drag-over {
+            border-color: var(--neon-green);
+            background: rgba(57, 255, 20, .06);
+            box-shadow: 0 0 15px rgba(57, 255, 20, .2) inset
+        }
+
+        .equals {
+            font-family: 'Orbitron', sans-serif;
+            font-size: 24px;
+            color: var(--neon-pink)
+        }
+
+        .block {
+            background: rgba(0, 243, 255, .05);
+            padding: 6px 10px;
+            border-radius: 4px;
+            border: 1px solid rgba(0, 243, 255, .15);
+            cursor: default;
+            user-select: none;
+            font-size: 16px;
+            letter-spacing: .5px;
+            display: inline-flex;
+            align-items: center;
+            transition: all .15s
+        }
+
+        .block.deletable {
+            cursor: pointer
+        }
+
+        .block.deletable:hover {
+            border-color: var(--neon-red);
+            background: rgba(255, 0, 60, .15);
+            box-shadow: 0 0 10px rgba(255, 0, 60, .3);
+            transform: scale(1.05)
+        }
+
+        .block.match-highlight {
+            border-color: var(--neon-green) !important;
+            background: rgba(57, 255, 20, .18) !important;
+            box-shadow: 0 0 14px rgba(57, 255, 20, .5) !important;
+            transform: scale(1.07)
+        }
+
+        .block.op-block {
+            background: transparent;
+            border-color: transparent;
+            padding: 4px 6px
+        }
+
+        .syn-fn {
+            color: var(--neon-blue);
+            font-weight: 700
+        }
+
+        .syn-var {
+            color: var(--neon-pink)
+        }
+
+        .syn-num {
+            color: var(--neon-green)
+        }
+
+        .syn-op {
+            color: #fff
+        }
+
+        /* Fraction & Sup Styling */
+        .math-frac {
+            display: inline-flex;
+            flex-direction: column;
+            vertical-align: middle;
+            align-items: center;
+            margin: 0 4px;
+        }
+        .math-num {
+            border-bottom: 1.5px solid var(--text-main);
+            padding: 0 4px;
+            width: 100%;
+            text-align: center;
+        }
+        .math-den {
+            padding: 0 4px;
+            width: 100%;
+            text-align: center;
+        }
+        .math-sup {
+            font-size: 0.75em;
+            vertical-align: super;
+            position: relative;
+            top: -0.2em;
+            padding-left: 1px;
+        }
+
+        .identity-card {
+            background: rgba(0, 0, 0, .5);
+            border: 1px solid var(--glass-border);
+            padding: 10px 12px;
+            border-radius: 6px;
+            cursor: grab;
+            text-align: center;
+            font-size: 13px;
+            transition: all .2s;
+            position: relative
+        }
+
+        .identity-card:hover {
+            border-color: var(--neon-blue);
+            box-shadow: 0 0 10px rgba(0, 243, 255, .3);
+        }
+
+        .identity-card:active {
+            cursor: grabbing;
+            transform: scale(.90)
+        }
+
+        .identity-card.algebra-card {
+            border-color: rgba(245, 158, 11, .3)
+        }
+
+        .identity-card.algebra-card:hover {
+            border-color: var(--neon-amber);
+            box-shadow: 0 0 10px rgba(245, 158, 11, .3)
+        }
+
+        .draft-indicator {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 15px;
+            background: rgba(255, 0, 234, .08);
+            border: 1px dashed var(--neon-pink);
+            border-radius: 6px;
+            font-family: 'Orbitron', sans-serif;
+            font-size: 11px;
+            color: var(--neon-pink);
+            letter-spacing: 1px
+        }
+
+        .draft-indicator .pulse {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--neon-pink);
+            animation: pulse 1.2s ease infinite
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: .3;
+                transform: scale(.8)
+            }
+
+            50% {
+                opacity: 1;
+                transform: scale(1.2)
+            }
+        }
+
+        .radar-overlay {
+            position: fixed;
+            inset: 0;
+            background: rgba(0, 0, 0, .85);
+            backdrop-filter: blur(10px);
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 100;
+            opacity: 0;
+            pointer-events: none;
+            transition: opacity .3s
+        }
+
+        .radar-overlay.active {
+            opacity: 1;
+            pointer-events: auto
+        }
+
+        .radar-container {
+            position: relative;
+            width: 300px;
+            height: 300px
+        }
+
+        .radar-circle {
+            position: absolute;
+            inset: 0;
+            border: 2px solid var(--neon-blue);
+            border-radius: 50%;
+            box-shadow: 0 0 20px var(--neon-blue)
+        }
+
+        .radar-arm {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            width: 50%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--neon-blue));
+            transform-origin: left center;
+            box-shadow: 0 0 10px var(--neon-blue);
+            transition: transform .1s linear
+        }
+
+        .radar-node {
+            position: absolute;
+            width: 12px;
+            height: 12px;
+            border-radius: 50%;
+            background: #fff;
+            transform: translate(-50%, -50%);
+            box-shadow: 0 0 10px #fff;
+            transition: background .3s, box-shadow .3s
+        }
+
+        .radar-title {
+            font-family: 'Orbitron';
+            color: var(--neon-blue);
+            font-size: 24px;
+            margin-bottom: 30px;
+            letter-spacing: 2px;
+            text-shadow: 0 0 10px var(--neon-blue)
+        }
+
+        .win-title {
+            font-size: 80px;
+            color: var(--neon-green);
+            font-family: 'Orbitron';
+            font-weight: 900;
+            text-shadow: 0 0 40px rgba(57, 255, 20, .6);
+            margin-bottom: 10px
+        }
+
+        .win-time {
+            font-size: 32px;
+            color: var(--neon-blue);
+            margin-bottom: 30px
+        }
+
+        .instructions {
+            font-size: 12px;
+            color: #94a3b8;
+            line-height: 1.5;
+            padding: 8px 10px;
+            background: rgba(0, 0, 0, .3);
+            border-radius: 4px;
+            border-left: 3px solid var(--neon-blue)
+        }
+    </style>
+</head>
+
+<body>
+    <div class="grid-bg"></div>
+    <div class="sidebar">
+        <h2>Identities</h2>
+        <div class="instructions">
+            <b>1. TYPE</b> the new expression in the draft box.<br>
+            <b>2. ENTER:</b> Commit draft (auto-verifies logical step).<br>
+            <b>ESC:</b> Cancel current draft.
+        </div>
+        <div id="identities-list"></div>
+    </div>
+    <div class="main">
+        <div class="header">
+            <input type="text" id="seed-input" class="glass-input" placeholder="Enter Seed..." style="width:160px">
+            <input type="number" id="difficulty-input" class="glass-input" placeholder="Difficulty" min="1" max="10"
+                value="3" style="width:110px">
+            <button class="btn" onclick="startGame(true)">Init System</button>
+            <button class="btn" onclick="document.getElementById('share-overlay').classList.add('active')"
+                style="border-color:var(--neon-pink);color:var(--neon-pink);">Create Level...</button>
+            <div class="timer" id="timer">00:00.00</div>
+        </div>
+        <div id="workspace"></div>
+    </div>
+    <div class="radar-overlay" id="radar-overlay">
+        <div class="radar-title" id="radar-title">VERIFYING UNIT CIRCLE [kπ/6]</div>
+        <div class="radar-container" id="radar-container">
+            <div class="radar-circle"></div>
+            <div class="radar-arm" id="radar-arm"></div>
+        </div>
+    </div>
+    <div class="radar-overlay" id="win-overlay">
+        <div class="win-title">Q.E.D.</div>
+        <div class="win-time">Time: <span id="win-time-display"></span></div>
+        <button class="btn" style="font-size:20px;padding:15px 30px"
+            onclick="document.getElementById('win-overlay').classList.remove('active')">Review Proof</button>
+    </div>
+
+    <!-- SHARE OVERLAY -->
+    <div class="radar-overlay" id="share-overlay">
+        <div
+            style="background:var(--glass-bg);padding:30px;border:1px solid var(--neon-blue);border-radius:8px;text-align:center;max-width:600px;">
+            <h2 style="font-size:24px;margin-bottom:20px;">SHARE CUSTOM LEVEL</h2>
+            <div
+                style="display:flex;gap:10px;margin-bottom:20px;align-items:center;justify-content:center;flex-wrap:wrap;">
+                <input type="text" id="custom-left" class="glass-input" placeholder="Left Side (e.g. sin(x)^2)"
+                    style="width:250px;">
+                <div style="color:var(--neon-pink);font-size:24px;font-family:Orbitron;">=</div>
+                <input type="text" id="custom-right" class="glass-input" placeholder="Right Side (e.g. 1 - cos(x)^2)"
+                    style="width:250px;">
+            </div>
+            <button class="btn" id="generate-link-btn" onclick="generateShareLink()">Verify & Copy Link</button>
+            <button class="btn" onclick="document.getElementById('share-overlay').classList.remove('active')"
+                style="margin-left:10px;border-color:var(--neon-red);color:var(--neon-red);">Close</button>
+        </div>
+    </div>
+
+    <script>
+        let steps = [], draft = null, timerInterval = null, startTime = null, gameWon = false;
+        let parsedIdentities = [];
+
+        window.onload = () => {
+            // Build parsed identity list
+            identityCategories.forEach(cat => {
+                cat.ids.forEach(pair => {
+                    const a = math.parse(pair[0]).toString(), b = math.parse(pair[1]).toString();
+                    parsedIdentities.push({
+                        a, b, cat: cat.name,
+                        htmlA: syntaxHighlight(a), htmlB: syntaxHighlight(b)
+                    });
+                });
+            });
+            renderSidebar();
+            createRadarNodes();
+            document.addEventListener('keydown', handleKey);
+            startGame();
+        };
+
+        // ─── Sidebar ──────────────────────────────────────────────────
+        function renderSidebar() {
+            const sb = document.getElementById('identities-list');
+            sb.innerHTML = '';
+
+            const cats = [...new Set(parsedIdentities.map(i => i.cat))];
+            cats.forEach(catName => {
+                const wrapper = document.createElement('div');
+                const catIds = parsedIdentities.filter(i => i.cat === catName);
+
+                const title = document.createElement('div');
+                title.className = 'cat-title collapsed';
+                title.innerHTML = `<span class="arrow">▼</span> ${catName}`;
+
+                const body = document.createElement('div');
+                body.className = 'cat-body collapsed';
+                // Add unique ID to easily retrieve and open it later
+                body.id = 'cat-body-' + catName.replace(/\s+/g, '-');
+                // Temporarily set high max-height since we use CSS collapsed class
+                body.style.maxHeight = '1000px';
+
+                title.onclick = () => {
+                    title.classList.toggle('collapsed');
+                    body.classList.toggle('collapsed');
+                };
+
+                catIds.forEach(id => {
+                    const card = document.createElement('div');
+                    card.className = 'identity-card';
+                    card.innerHTML = `${id.htmlA} <span style="color:var(--neon-pink)">=</span> ${id.htmlB}`;
+                    body.appendChild(card);
+                });
+
+                wrapper.appendChild(title);
+                wrapper.appendChild(body);
+                sb.appendChild(wrapper);
+            });
+
+            // Algebra ops
+            const algGroups = [
+                { label: 'Expansion', color: '#f59e0b' },
+                { label: 'Rearrange', color: '#06b6d4' },
+                { label: 'Fractions', color: '#10b981' },
+                { label: 'Reduction', color: '#ec4899' },
+                { label: 'Identity / Simplify', color: '#8b5cf6' }
+            ];
+
+            const algWrapper = document.createElement('div');
+            const algTitle = document.createElement('div');
+            algTitle.className = 'cat-title collapsed';
+            algTitle.innerHTML = '<span class="arrow">▼</span> Algebra';
+
+            const algBody = document.createElement('div');
+            algBody.className = 'cat-body collapsed';
+            algBody.id = 'cat-body-Algebra';
+            algBody.style.maxHeight = '1500px';
+
+            algTitle.onclick = () => {
+                algTitle.classList.toggle('collapsed');
+                algBody.classList.toggle('collapsed');
+            };
+
+            algGroups.forEach(grp => {
+                const opsInGroup = algebraOps.map((op, i) => ({ op, i })).filter(({ op }) => op.color === grp.color);
+                if (opsInGroup.length === 0) return;
+                const lbl = document.createElement('div');
+                lbl.style.cssText = 'font-size:10px;letter-spacing:1.5px;color:' + grp.color + ';text-transform:uppercase;padding:6px 0 2px;font-family:Orbitron,sans-serif;opacity:.8';
+                lbl.textContent = grp.label;
+                algBody.appendChild(lbl);
+                opsInGroup.forEach(({ op, i }) => {
+                    const card = document.createElement('div');
+                    card.className = 'identity-card algebra-card';
+                    card.style.borderColor = op.color + '40';
+                    card.innerHTML = `<span style="color:${op.color};font-weight:700">${op.name}</span><br><span style="font-size:11px;color:#999">${op.desc}</span>`;
+                    algBody.appendChild(card);
+                });
+            });
+
+            algWrapper.appendChild(algTitle);
+            algWrapper.appendChild(algBody);
+            sb.appendChild(algWrapper);
+        }
+
+        // ─── Game ─────────────────────────────────────────────────────
+        function startGame(forceNew = false) {
+            let level = null;
+            const urlParams = new URLSearchParams(window.location.search);
+
+            // If we have URL parameters and NOT forcing a new random level
+            if (!forceNew && urlParams.has('l') && urlParams.has('r')) {
+                try {
+                    level = { left: atob(urlParams.get('l')), right: atob(urlParams.get('r')) };
+                    document.getElementById('seed-input').value = "SHARED";
+                } catch (e) { }
+            }
+
+            if (!level) {
+                // Clear URL if forcing new
+                if (forceNew) window.history.pushState({}, document.title, window.location.pathname);
+                let seed = document.getElementById('seed-input').value || Math.random().toString(36).substring(7).toUpperCase();
+                if (seed === "SHARED") seed = Math.random().toString(36).substring(7).toUpperCase();
+                document.getElementById('seed-input').value = seed;
+                const diff = parseInt(document.getElementById('difficulty-input').value) || 3;
+                level = generateFromSeed(seed, diff);
+            }
+
+            steps = [{ left: math.parse(level.left).toString(), right: math.parse(level.right).toString() }];
+            draft = null; gameWon = false;
+            document.getElementById('win-overlay').classList.remove('active');
+            startTime = Date.now(); clearInterval(timerInterval);
+            timerInterval = setInterval(updateTimer, 10);
+            renderWorkspace();
+        }
+
+        // ─── Render ───────────────────────────────────────────────────
+        function renderWorkspace() {
+            const ws = document.getElementById('workspace');
+            ws.innerHTML = '';
+            steps.forEach(step => {
+                const d = document.createElement('div'); d.className = 'step';
+                d.innerHTML = `<div class="side">${syntaxHighlight(step.left)}</div><div class="equals">=</div><div class="side">${syntaxHighlight(step.right)}</div>`;
+                ws.appendChild(d);
+            });
+            if (draft && !gameWon) {
+                const ind = document.createElement('div'); ind.className = 'draft-indicator';
+                ind.innerHTML = '<div class="pulse"></div> DRAFT — Type your next mathematical step, press ENTER to automatically verify.';
+                ws.appendChild(ind);
+
+                const dd = document.createElement('div'); dd.className = 'step';
+                dd.style.borderColor = 'var(--neon-pink)'; dd.style.boxShadow = '0 0 20px rgba(255,0,234,.15)';
+
+                const ls = document.createElement('div'); ls.className = 'side'; ls.id = 'draft-left';
+                ls.style.flexDirection = 'column'; ls.style.alignItems = 'stretch';
+                ls.innerHTML = `<textarea id="draft-input-left" class="glass-input" style="width:100%;font-size:18px;margin-bottom:10px" oninput="updateDraftPreview('left')">${draft.left}</textarea>
+                                <div id="draft-preview-left" style="display:flex;flex-wrap:wrap;gap:6px;">${syntaxHighlight(draft.left)}</div>`;
+
+                const eq = document.createElement('div'); eq.className = 'equals'; eq.textContent = '=';
+
+                const rs = document.createElement('div'); rs.className = 'side'; rs.id = 'draft-right';
+                rs.style.flexDirection = 'column'; rs.style.alignItems = 'stretch';
+                rs.innerHTML = `<textarea id="draft-input-right" class="glass-input" style="width:100%;font-size:18px;margin-bottom:10px" oninput="updateDraftPreview('right')">${draft.right}</textarea>
+                                <div id="draft-preview-right" style="display:flex;flex-wrap:wrap;gap:6px;">${syntaxHighlight(draft.right)}</div>`;
+
+                dd.appendChild(ls); dd.appendChild(eq); dd.appendChild(rs);
+                ws.appendChild(dd);
+                
+                // Trigger auto-expand for initial values
+                autoExpand(document.getElementById('draft-input-left'));
+                autoExpand(document.getElementById('draft-input-right'));
+            }
+            if (!draft && !gameWon) {
+                const h = document.createElement('div'); h.className = 'draft-indicator'; h.style.cursor = 'pointer';
+                h.innerHTML = '<div class="pulse"></div> Press ENTER to start a new step';
+                h.onclick = () => startDraft();
+                ws.appendChild(h);
+            }
+            ws.scrollTop = ws.scrollHeight;
+        }
+
+        window.updateDraftPreview = function (side) {
+            try {
+                const el = document.getElementById('draft-input-' + side);
+                const val = el.value;
+                autoExpand(el);
+                const normalized = math.parse(val).toString();
+                document.getElementById('draft-preview-' + side).innerHTML = syntaxHighlight(normalized);
+                if (side === 'left') draft.left = normalized;
+                else draft.right = normalized;
+                el.style.borderColor = '';
+            } catch (e) {
+                // Invalid syntax, visually indicate
+                document.getElementById('draft-input-' + side).style.borderColor = 'var(--neon-red)';
+            }
+        }
+
+        function autoExpand(el) {
+            el.style.height = 'auto';
+            el.style.height = (el.scrollHeight) + 'px';
+        }
+
+        function renderBlocksHTML(exprStr, isDraft, side) {
+            const blocks = exprToBlocks(exprStr);
+            return blocks.map((b, i) => {
+                const html = tokenToHTML(b);
+                const isOp = '+-*/^()'.includes(b);
+                const cls = 'block' + (isOp ? ' op-block' : '') + (isDraft ? ' deletable' : '');
+                const click = isDraft ? ` onclick="deleteDraftBlockAt('${side}',${i})"` : '';
+                return `<div class="${cls}" data-idx="${i}" data-side="${side}"${click}>${html}</div>`;
+            }).join('');
+        }
+
+        function startDraft() {
+            if (gameWon) return;
+            const last = steps[steps.length - 1];
+            draft = { left: last.left, right: last.right };
+            renderWorkspace();
+        }
+
+        // ─── Keyboard: ENTER to commit ────────────────────────────────
+        function handleKey(e) {
+            if (e.key === 'Enter') {
+                if (gameWon) return;
+                if (draft) {
+                    e.preventDefault();
+                    commitDraft();
+                } else {
+                    startDraft();
+                }
+            }
+            if (e.key === 'Escape') {
+                if (draft) { draft = null; renderWorkspace(); }
+            }
+        }
+
+        async function commitDraft() {
+            if (!draft) return;
+            const last = steps[steps.length - 1];
+
+            try {
+                draft.left = math.parse(document.getElementById('draft-input-left').value).toString();
+                draft.right = math.parse(document.getElementById('draft-input-right').value).toString();
+            } catch (e) { return; } // invalid input syntax, do nothing
+
+            if (draft.left === last.left && draft.right === last.right) {
+                draft = null; renderWorkspace(); return;
+            }
+
+            const overlay = document.getElementById('radar-overlay');
+            const title = document.getElementById('radar-title');
+
+            // Show verifying UI temporarily while solver runs
+            overlay.classList.add('active');
+            title.innerText = 'SOLVER ANALYZING STEPS...';
+            title.style.color = 'var(--neon-blue)';
+            
+            // Allow DOM to paint loading text
+            await new Promise(r => setTimeout(r, 50));
+
+            let leftStat = await searchSteps(last.left, draft.left);
+            let rightStat = await searchSteps(last.right, draft.right);
+
+            overlay.classList.remove('active');
+
+            if (leftStat.steps === -1 || rightStat.steps === -1) {
+                alert("NOT EQUAL! The solver can't solve it. Your mathematical steps are objectively invalid.");
+                return;
+            }
+
+            if (leftStat.steps > 1 || rightStat.steps > 1) {
+                let msg = "Your reasoning is too much of a leap!\n\n";
+                if (leftStat.steps > 1) {
+                    msg += "The solver required " + (leftStat.steps === Infinity ? "3 or more" : leftStat.steps) + " steps for the Left Side:\n";
+                    leftStat.path.forEach((p, i) => msg += (i+1) + ". " + p + "\n");
+                    msg += "\n";
+                }
+                if (rightStat.steps > 1) {
+                    msg += "The solver required " + (rightStat.steps === Infinity ? "3 or more" : rightStat.steps) + " steps for the Right Side:\n";
+                    rightStat.path.forEach((p, i) => msg += (i+1) + ". " + p + "\n");
+                }
+                alert(msg.trim());
+                return;
+            }
+
+            // Radar animation plays successfully because logic has been robustly proven by our step solver
+            await runRadarAnimation(last.left, draft.left, last.right, draft.right, true);
+
+            // Extract valid categories successfully solved in 1 step
+            let leftCat = leftStat.cat || 'None';
+            let rightCat = rightStat.cat || 'None';
+
+            let valid = true;
+
+            if (valid) {
+                steps.push({ left: draft.left, right: draft.right });
+                draft = null;
+
+                // Light up the discovered identity category for them!
+                if (leftCat !== 'None') {
+                    const c = document.getElementById('cat-body-' + leftCat.replace(/\s+/g, '-'));
+                    if (c) { c.classList.remove('collapsed'); c.previousElementSibling.classList.remove('collapsed'); }
+                }
+                if (rightCat !== 'None') {
+                    const c = document.getElementById('cat-body-' + rightCat.replace(/\s+/g, '-'));
+                    if (c) { c.classList.remove('collapsed'); c.previousElementSibling.classList.remove('collapsed'); }
+                }
+
+                checkWin(); renderWorkspace();
+            } else {
+                // Show failure animation
+                overlay.classList.add('active');
+                title.innerText = 'EQUIVALENCE FAILED'; title.style.color = 'var(--neon-red)';
+                setTimeout(() => { overlay.classList.remove('active'); title.innerText = 'VERIFYING UNIT CIRCLE [kπ/6]'; title.style.color = 'var(--neon-blue)'; }, 1500);
+            }
+        }
+
+        // ─── Radar Animation ──────────────────────────────────────────
+        function createRadarNodes() {
+            const c = document.getElementById('radar-container');
+            for (let i = 0; i < 12; i++) {
+                const ang = (i * 30 - 90) * Math.PI / 180;
+                const n = document.createElement('div'); n.className = 'radar-node'; n.id = `node-${i}`;
+                n.style.left = `${150 + 150 * Math.cos(ang)}px`; n.style.top = `${150 + 150 * Math.sin(ang)}px`;
+                c.appendChild(n);
+            }
+        }
+
+        async function runRadarAnimation(oldL, newL, oldR, newR, skipLogic = false) {
+            const overlay = document.getElementById('radar-overlay');
+            const arm = document.getElementById('radar-arm');
+            overlay.classList.add('active');
+            for (let i = 0; i < 12; i++) { const n = document.getElementById(`node-${i}`); n.style.background = '#fff'; n.style.boxShadow = '0 0 10px #fff'; }
+
+            let allValid = true;
+            for (let i = 0; i < 12; i++) {
+                arm.style.transform = `rotate(${i * 30 - 90}deg)`;
+                await new Promise(r => setTimeout(r, 45));
+                const n = document.getElementById(`node-${i}`);
+                
+                let ok = true;
+                if (!skipLogic) {
+                    for (let k = i * 2 - 12; k < (i + 1) * 2 - 12 && k <= 12; k++) {
+                        const theta = k * Math.PI / 6;
+                        try {
+                            const cOL = math.compile(oldL), cNL = math.compile(newL), cOR = math.compile(oldR), cNR = math.compile(newR);
+                            if (!checkPointValid(cOL, cNL, theta) || !checkPointValid(cOR, cNR, theta)) { ok = false; break; }
+                        } catch (e) { ok = false; break; }
+                    }
+                }
+                
+                if (ok) { n.style.background = 'var(--neon-green)'; n.style.boxShadow = '0 0 15px var(--neon-green)'; }
+                else { n.style.background = 'var(--neon-red)'; n.style.boxShadow = '0 0 15px var(--neon-red)'; allValid = false; break; }
+            }
+            if (!allValid) {
+                // Pause slightly on failure state
+                await new Promise(r => setTimeout(r, 600));
+            } else {
+                await new Promise(r => setTimeout(r, 200));
+            }
+            if (allValid) overlay.classList.remove('active');
+            return allValid;
+        }
+
+        function checkWin() {
+            const last = steps[steps.length - 1];
+            if (last.left === last.right) {
+                gameWon = true; clearInterval(timerInterval);
+                document.getElementById('win-time-display').innerText = document.getElementById('timer').innerText;
+                setTimeout(() => document.getElementById('win-overlay').classList.add('active'), 300);
+            }
+        }
+
+        function updateTimer() {
+            if (!startTime) return;
+            const d = Date.now() - startTime;
+            const m = Math.floor(d / 60000).toString().padStart(2, '0');
+            const s = Math.floor((d % 60000) / 1000).toString().padStart(2, '0');
+            const ms = Math.floor((d % 1000) / 10).toString().padStart(2, '0');
+            document.getElementById('timer').innerText = `${m}:${s}.${ms}`;
+        }
+
+        function generateFromSeed(seedStr, difficulty) {
+            let h = 0; for (let i = 0; i < seedStr.length; i++)h = Math.imul(31, h) + seedStr.charCodeAt(i) | 0;
+            let rng = () => { var t = h += 0x6D2B79F5; t = Math.imul(t ^ t >>> 15, t | 1); t ^= t + Math.imul(t ^ t >>> 7, t | 61); return ((t ^ t >>> 14) >>> 0) / 4294967296; };
+
+            // Filter by exact requested difficulty, or fallback to the full database
+            let matching = hugeLevelDB.filter(l => l.diff === difficulty);
+            if (matching.length === 0) matching = hugeLevelDB;
+
+            return matching[Math.floor(rng() * matching.length)];
+        }
+
+        async function generateShareLink() {
+            const btn = document.getElementById('generate-link-btn');
+            try {
+                const l = document.getElementById('custom-left').value;
+                const r = document.getElementById('custom-right').value;
+
+                // Parse test
+                const pL = math.compile(l);
+                const pR = math.compile(r);
+
+                // Quick validation using existing equivalence logic
+                let ok = true;
+                for (let k = -6; k <= 6; k++) {
+                    const theta = k * Math.PI / 6;
+                    if (!checkPointValid(pL, pR, theta)) { ok = false; break; }
+                }
+
+                if (!ok) {
+                    btn.innerText = "FAILED EQUIVALENCE CHECK";
+                    btn.style.color = "var(--neon-red)";
+                    btn.style.borderColor = "var(--neon-red)";
+                    setTimeout(() => { btn.innerText = "Verify & Copy Link"; btn.style.color = ""; btn.style.borderColor = ""; }, 2000);
+                    return;
+                }
+
+                const q = new URLSearchParams();
+                q.set('l', btoa(l));
+                q.set('r', btoa(r));
+                const url = window.location.origin + window.location.pathname + '?' + q.toString();
+                await navigator.clipboard.writeText(url);
+
+                btn.innerText = "COPIED!";
+                btn.style.color = "var(--neon-green)";
+                btn.style.borderColor = "var(--neon-green)";
+                setTimeout(() => { btn.innerText = "Verify & Copy Link"; btn.style.color = ""; btn.style.borderColor = ""; }, 2000);
+            } catch (e) {
+                btn.innerText = "PARSE ERROR";
+                btn.style.color = "var(--neon-red)";
+                btn.style.borderColor = "var(--neon-red)";
+                setTimeout(() => { btn.innerText = "Verify & Copy Link"; btn.style.color = ""; btn.style.borderColor = ""; }, 2000);
+            }
+        }
+    </script>
+</body>
+
+</html>
