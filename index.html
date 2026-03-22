@@ -943,7 +943,7 @@
                 // Quick validation using existing equivalence logic
                 let ok = true;
                 for (let k = -6; k <= 6; k++) {
-                    const theta = k * Math.PI / 6;
+                    const theta = k * Math.PI / 6 + 0.11111;
                     if (!checkPointValid(pL, pR, theta)) { ok = false; break; }
                 }
 
