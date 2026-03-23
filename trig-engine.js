@@ -838,6 +838,16 @@ function checkPointValid(codeA, codeB, theta) {
 }
 
 function validateEquivalence(oldExpr, newExpr) {
+    // Try nerdamer first (best for trig identities)
+    if (typeof nerdamer !== 'undefined') {
+        try {
+            const diff = `simplify((${oldExpr}) - (${newExpr}))`;
+            const result = nerdamer(diff).toString();
+            if (result === '0') return true;
+        } catch(e) { /* fall through to numeric test */ }
+    }
+    
+    // Fall back to numeric validation
     try {
         const codeOld = math.compile(oldExpr);
         const codeNew = math.compile(newExpr);
@@ -884,56 +894,93 @@ function getNeighbors(exprStr, rules) {
 }
 
 async function searchSteps(oldExpr, newExpr) {
-    // 1. Check direct equivalence via Nerdamer (fast logical check)
+    // 1. Check direct equivalence using validateEquivalence (robust, safe)
     let isEq = false;
     try { 
-        if (nerdamer('simplify((' + oldExpr + ')-(' + newExpr + '))').toString() === '0') isEq = true;
-    } catch(e) {}
-    if (!isEq) isEq = validateEquivalence(oldExpr, newExpr);
+        isEq = validateEquivalence(oldExpr, newExpr);
+    } catch(e) { 
+        return { steps: -1, path: [], cat: null };
+    }
 
     if (!isEq) return { steps: -1, path: [], cat: null }; // Not mathematically equal
 
-    const targetStr = math.parse(newExpr).toString();
-    if (math.parse(oldExpr).toString() === targetStr) {
+    let oldStr = '', targetStr = '';
+    try {
+        oldStr = math.parse(oldExpr).toString();
+        targetStr = math.parse(newExpr).toString();
+    } catch(e) {
+        return { steps: -1, path: [], cat: null };
+    }
+
+    if (oldStr === targetStr) {
         return { steps: 0, path: [], cat: 'Algebra' }; // Pure formatting/whitespace change
     }
 
     const rules = [];
     identityCategories.forEach(cat => {
         cat.ids.forEach(pair => {
-            const r = { name: cat.name, from: math.parse(pair[0]).toString(), to: math.parse(pair[1]).toString() };
-            // Tag identity type for specialized matching if needed
-            if (cat.name === 'Double Angle') r.type = 'double_angle';
-            rules.push(r);
-            const rRev = { name: cat.name, from: math.parse(pair[1]).toString(), to: math.parse(pair[0]).toString() };
-            if (cat.name === 'Double Angle') rRev.type = 'double_angle';
-            rules.push(rRev);
+            try {
+                const r = { name: cat.name, from: math.parse(pair[0]).toString(), to: math.parse(pair[1]).toString() };
+                if (cat.name === 'Double Angle') r.type = 'double_angle';
+                rules.push(r);
+                const rRev = { name: cat.name, from: math.parse(pair[1]).toString(), to: math.parse(pair[0]).toString() };
+                if (cat.name === 'Double Angle') rRev.type = 'double_angle';
+                rules.push(rRev);
+            } catch(e) {}
         });
     });
     algebraOps.forEach(op => rules.push({ name: op.name, isAlgebra: true, fn: op.fn }));
 
     // Depth 1
-    const step1 = getNeighbors(oldExpr, rules);
-    for (let n1 of step1) {
-        try { if (math.parse(n1.expr).toString() === targetStr) return { steps: 1, path: [n1.desc], cat: n1.cat }; } catch(e){}
+    let step1 = [];
+    try {
+        step1 = getNeighbors(oldExpr, rules);
+    } catch(e) {
+        return { steps: Infinity, path: [], cat: null };
     }
 
-    // Depth 1 using Nerdamer equivalence (handles commutativity that strict AST misses)
     for (let n1 of step1) {
         try { 
-            if (nerdamer('simplify((' + n1.expr + ')-(' + targetStr + '))').toString() === '0') {
+            if (math.parse(n1.expr).toString() === targetStr) {
+                return { steps: 1, path: [n1.desc], cat: n1.cat };
+            }
+        } catch(e){}
+    }
+
+    // Depth 1 using validateEquivalence (tries nerdamer first)
+    for (let n1 of step1) {
+        try { 
+            if (validateEquivalence(n1.expr, newExpr)) {
                return { steps: 1, path: [n1.desc], cat: n1.cat };
             }
         } catch(e) {}
     }
 
+    // Also try nerdamer directly if available for algebraic simplification
+    if (typeof nerdamer !== 'undefined') {
+        for (let n1 of step1) {
+            try {
+                const diff1 = `simplify((${n1.expr}) - (${newExpr}))`;
+                if (nerdamer(diff1).toString() === '0') {
+                    return { steps: 1, path: [n1.desc], cat: n1.cat };
+                }
+            } catch(e) {}
+        }
+    }
+
     // Depth 2
     let count = 0;
     for (let n1 of step1) {
-        const step2 = getNeighbors(n1.expr, rules);
+        let step2 = [];
+        try {
+            step2 = getNeighbors(n1.expr, rules);
+        } catch(e) {
+            continue;
+        }
+
         for (let n2 of step2) {
             count++;
-            if (count % 40 === 0) await new Promise(r => setTimeout(r, 0)); // Yield event loop to prevent freezing
+            if (count % 40 === 0) await new Promise(r => setTimeout(r, 0));
             try { 
                 if (math.parse(n2.expr).toString() === targetStr) {
                     return { steps: 2, path: [n1.desc, n2.desc], cat: null };
@@ -942,19 +989,99 @@ async function searchSteps(oldExpr, newExpr) {
         }
     }
 
+    // Depth 2 with validateEquivalence
+    for (let n1 of step1) {
+        let step2 = [];
+        try {
+            step2 = getNeighbors(n1.expr, rules);
+        } catch(e) {
+            continue;
+        }
+
+        for (let n2 of step2) {
+            count++;
+            if (count % 40 === 0) await new Promise(r => setTimeout(r, 0));
+            try {
+                if (validateEquivalence(n2.expr, newExpr)) {
+                    return { steps: 2, path: [n1.desc, n2.desc], cat: null };
+                }
+            } catch(e) {}
+        }
+    }
+
+    // Nerdamer-direct depth 2 check
+    if (typeof nerdamer !== 'undefined') {
+        for (let n1 of step1) {
+            let step2 = [];
+            try {
+                step2 = getNeighbors(n1.expr, rules);
+            } catch(e) {
+                continue;
+            }
+            for (let n2 of step2) {
+                try {
+                    const diff2 = `simplify((${n2.expr}) - (${newExpr}))`;
+                    if (nerdamer(diff2).toString() === '0') {
+                        return { steps: 2, path: [n1.desc, n2.desc], cat: null };
+                    }
+                } catch(e) {}
+            }
+        }
+    }
+
     // Depth 3
     for (let n1 of step1) {
-        const step2 = getNeighbors(n1.expr, rules);
+        let step2 = [];
+        try {
+            step2 = getNeighbors(n1.expr, rules);
+        } catch(e) {
+            continue;
+        }
+
         for (let n2 of step2) {
-            const step3 = getNeighbors(n2.expr, rules);
+            let step3 = [];
+            try {
+                step3 = getNeighbors(n2.expr, rules);
+            } catch(e) {
+                continue;
+            }
+
             for (let n3 of step3) {
                 count++;
-                if (count % 40 === 0) await new Promise(r => setTimeout(r, 0)); // Yield event loop to prevent freezing
+                if (count % 40 === 0) await new Promise(r => setTimeout(r, 0));
                 try { 
                     if (math.parse(n3.expr).toString() === targetStr) {
                         return { steps: 3, path: [n1.desc, n2.desc, n3.desc], cat: null };
                     }
                 } catch(e){}
+            }
+        }
+    }
+
+    // Nerdamer-direct depth 3 check
+    if (typeof nerdamer !== 'undefined') {
+        for (let n1 of step1) {
+            let step2 = [];
+            try {
+                step2 = getNeighbors(n1.expr, rules);
+            } catch(e) {
+                continue;
+            }
+            for (let n2 of step2) {
+                let step3 = [];
+                try {
+                    step3 = getNeighbors(n2.expr, rules);
+                } catch(e) {
+                    continue;
+                }
+                for (let n3 of step3) {
+                    try {
+                        const diff3 = `simplify((${n3.expr}) - (${newExpr}))`;
+                        if (nerdamer(diff3).toString() === '0') {
+                            return { steps: 3, path: [n1.desc, n2.desc, n3.desc], cat: null };
+                        }
+                    } catch(e) {}
+                }
             }
         }
     }
