@@ -252,6 +252,69 @@ function renderMathRecursive(node) {
     return node.toString();
 }
 
+// ─── Extract inner argument from function patterns ──────────
+function extractInnerExpr(node) {
+    // For sin(x), cos(x), tan(x), etc. - return the argument
+    if (node.type === 'FunctionNode' && node.args.length === 1) {
+        return node.args[0];
+    }
+    // For f(x)^2 or similar - go inside the power
+    if (node.type === 'OperatorNode' && node.op === '^' && node.args.length === 2) {
+        return extractInnerExpr(node.args[0]);
+    }
+    // For other cases, return null (can't extract)
+    return null;
+}
+
+// ─── Pattern matching with substitution ──────────────────────
+function tryPatternMatch(actualExpr, patternExpr) {
+    // Attempt to match actualExpr against patternExpr
+    // Returns { matched: true, substitution: {x: actualInner} } or { matched: false }
+    
+    try {
+        const actualNorm = normalizeVars(actualExpr);
+        const patternNorm = normalizeVars(patternExpr);
+        
+        if (actualNorm === patternNorm) {
+            // Direct match after normalization
+            return { matched: true, substitution: null, isExact: true };
+        }
+        
+        // Try to extract inner expressions for parametric matching
+        const actualAst = math.parse(actualExpr);
+        const patternAst = math.parse(patternExpr);
+        const actualInner = extractInnerExpr(actualAst);
+        const patternInner = extractInnerExpr(patternAst);
+        
+        if (actualInner && patternInner && patternInner.toString() === 'x') {
+            // Pattern has 'x' as inner expression, and we have a matching structure
+            return { matched: true, substitution: { x: actualInner.toString() }, isExact: false };
+        }
+        
+        return { matched: false };
+    } catch(e) {
+        return { matched: false };
+    }
+}
+
+// ─── Apply substitution to expression ────────────────────────
+function applySubstitution(expr, subst) {
+    if (!subst) return expr;
+    
+    let result = expr;
+    for (const [key, value] of Object.entries(subst)) {
+        // Replace x with (value) carefully
+        const regex = new RegExp('\\b' + key + '\\b', 'g');
+        result = result.replace(regex, `(${value})`);
+    }
+    
+    try {
+        return math.parse(result).toString();
+    } catch(e) {
+        return expr;
+    }
+}
+
 // ─── AST-based Match Finding ─────────────────────────────────
 // Finds all contiguous block subsequences that match an identity
 // pattern when parsed. Returns array of {start, end, from, to}
@@ -264,21 +327,18 @@ function findAllMatches(blocks, r) {
             const sub = blocks.slice(s, e + 1).join(' ');
             try {
                 const parsed = math.parse(sub).toString();
-                const parsedNorm = normalizeVars(parsed);
-                const fromNorm = normalizeVars(r.from);
-                if (parsedNorm === fromNorm) {
-                    const varName = getMainVar(sub);
-                    let to = r.to;
-                    if (varName && r.to.includes('x')) {
-                        to = r.to.replace(/x/g, varName);
-                    }
+                
+                // Try matching from -> to direction
+                let match1 = tryPatternMatch(parsed, r.from);
+                if (match1.matched) {
+                    let to = applySubstitution(r.to, match1.substitution);
                     matches.push({start: s, end: e, from: parsed, to: to});
-                } else if (parsedNorm === normalizeVars(r.to)) {
-                    const varName = getMainVar(sub);
-                    let from = r.from;
-                    if (varName && r.from.includes('x')) {
-                        from = r.from.replace(/x/g, varName);
-                    }
+                }
+                
+                // Try matching to -> from direction (reverse)
+                let match2 = tryPatternMatch(parsed, r.to);
+                if (match2.matched) {
+                    let from = applySubstitution(r.from, match2.substitution);
                     matches.push({start: s, end: e, from: parsed, to: from});
                 }
             } catch(ex) { /* invalid sub-expr */ }
@@ -287,122 +347,78 @@ function findAllMatches(blocks, r) {
 
     // Parametric matching for Double Angle
     if (r.type === 'double_angle') {
-        // ... existing double angle code ...
-    }
-
-    // Parametric matching for Pythagorean
-    if (r.type === 'pythagorean') {
         for (let s = 0; s < maxLen; s++) {
             for (let e = s; e < maxLen; e++) {
                 const sub = blocks.slice(s, e + 1).join(' ');
                 try {
                     const subAst = math.parse(sub);
-                    // sin^2(theta) + cos^2(theta) = 1
-                    if (r.from === 'sin(x)^2 + cos(x)^2') {
-                        if (subAst.type === 'OperatorNode' && subAst.op === '+' && subAst.args.length === 2) {
+                    // For sin(2*x) -> 2*sin(x)*cos(x)
+                    if (r.from === 'sin(2 * x)') {
+                        if (subAst.type === 'FunctionNode' && subAst.name === 'sin' && subAst.args.length === 1) {
+                            const arg = subAst.args[0];
+                            if (arg.type === 'OperatorNode' && arg.op === '*' && arg.args.length === 2) {
+                                const [left, right] = arg.args;
+                                if (left.type === 'ConstantNode' && left.value % 2 === 0 && left.value > 0) {
+                                    const c = left.value;
+                                    const exprStr = right.toString();
+                                    const toStr = math.parse(`2 * sin(${c/2} * ${exprStr}) * cos(${c/2} * ${exprStr})`).toString();
+                                    matches.push({start: s, end: e, from: sub, to: toStr});
+                                }
+                            }
+                        }
+                    }
+                    // For 2*sin(x)*cos(x) -> sin(2*x)
+                    else if (r.from === '2 * sin(x) * cos(x)') {
+                        if (subAst.type === 'OperatorNode' && subAst.op === '*' && subAst.args.length === 2) {
                             const [left, right] = subAst.args;
-                            if (left.type === 'OperatorNode' && left.op === '^' && left.args.length === 2 && left.args[1].type === 'ConstantNode' && left.args[1].value === 2 &&
-                                right.type === 'OperatorNode' && right.op === '^' && right.args.length === 2 && right.args[1].type === 'ConstantNode' && right.args[1].value === 2) {
-                                const sinBase = left.args[0];
-                                const cosBase = right.args[0];
-                                if (sinBase.type === 'FunctionNode' && sinBase.name === 'sin' && sinBase.args.length === 1 &&
+                            if (left.type === 'ConstantNode' && left.value === 2 && right.type === 'OperatorNode' && right.op === '*' && right.args.length === 2) {
+                                const [sinPart, cosPart] = right.args;
+                                if (sinPart.type === 'FunctionNode' && sinPart.name === 'sin' && sinPart.args.length === 1 &&
+                                    cosPart.type === 'FunctionNode' && cosPart.name === 'cos' && cosPart.args.length === 1) {
+                                    const expr = sinPart.args[0];
+                                    if (expr.toString() === cosPart.args[0].toString()) {
+                                        const exprStr = expr.toString();
+                                        const toStr = math.parse(`sin(2 * ${exprStr})`).toString();
+                                        matches.push({start: s, end: e, from: sub, to: toStr});
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // For cos(2*x) -> cos^2 - sin^2
+                    else if (r.from === 'cos(2 * x)') {
+                        if (subAst.type === 'FunctionNode' && subAst.name === 'cos' && subAst.args.length === 1) {
+                            const arg = subAst.args[0];
+                            if (arg.type === 'OperatorNode' && arg.op === '*' && arg.args.length === 2) {
+                                const [left, right] = arg.args;
+                                if (left.type === 'ConstantNode' && left.value % 2 === 0 && left.value > 0) {
+                                    const c = left.value;
+                                    const exprStr = right.toString();
+                                    const toStr = math.parse(`cos(${c/2} * ${exprStr})^2 - sin(${c/2} * ${exprStr})^2`).toString();
+                                    matches.push({start: s, end: e, from: sub, to: toStr});
+                                }
+                            }
+                        }
+                    }
+                    // For cos^2 - sin^2 -> cos(2*x)
+                    else if (r.from === 'cos(x)^2 - sin(x)^2') {
+                        if (subAst.type === 'OperatorNode' && subAst.op === '-' && subAst.args.length === 2) {
+                            const [left, right] = subAst.args;
+                            if (left.type === 'OperatorNode' && left.op === '^' && left.args.length === 2 &&
+                                right.type === 'OperatorNode' && right.op === '^' && right.args.length === 2) {
+                                const [cosBase, cosExp] = left.args;
+                                const [sinBase, sinExp] = right.args;
+                                if (cosExp.type === 'ConstantNode' && cosExp.value === 2 &&
+                                    sinExp.type === 'ConstantNode' && sinExp.value === 2 &&
                                     cosBase.type === 'FunctionNode' && cosBase.name === 'cos' && cosBase.args.length === 1 &&
-                                    sinBase.args[0].toString() === cosBase.args[0].toString()) {
-                                    const theta = sinBase.args[0].toString();
-                                    matches.push({start: s, end: e, from: sub, to: '1'});
+                                    sinBase.type === 'FunctionNode' && sinBase.name === 'sin' && sinBase.args.length === 1) {
+                                    const expr = cosBase.args[0];
+                                    if (expr.toString() === sinBase.args[0].toString()) {
+                                        const exprStr = expr.toString();
+                                        const toStr = math.parse(`cos(2 * ${exprStr})`).toString();
+                                        matches.push({start: s, end: e, from: sub, to: toStr});
+                                    }
                                 }
-                            }
-                        }
-                    }
-                    // 1 - sin^2(theta) = cos^2(theta)
-                    else if (r.from === '1 - sin(x)^2') {
-                        if (subAst.type === 'OperatorNode' && subAst.op === '-' && subAst.args.length === 2) {
-                            const [left, right] = subAst.args;
-                            if (left.type === 'ConstantNode' && left.value === 1 &&
-                                right.type === 'OperatorNode' && right.op === '^' && right.args.length === 2 && right.args[1].type === 'ConstantNode' && right.args[1].value === 2) {
-                                const sinBase = right.args[0];
-                                if (sinBase.type === 'FunctionNode' && sinBase.name === 'sin' && sinBase.args.length === 1) {
-                                    const theta = sinBase.args[0].toString();
-                                    const toStr = math.parse(`cos(${theta})^2`).toString();
-                                    matches.push({start: s, end: e, from: sub, to: toStr});
-                                }
-                            }
-                        }
-                    }
-                    // Similar for other Pythagorean identities
-                    // 1 - cos^2(theta) = sin^2(theta)
-                    else if (r.from === '1 - cos(x)^2') {
-                        if (subAst.type === 'OperatorNode' && subAst.op === '-' && subAst.args.length === 2) {
-                            const [left, right] = subAst.args;
-                            if (left.type === 'ConstantNode' && left.value === 1 &&
-                                right.type === 'OperatorNode' && right.op === '^' && right.args.length === 2 && right.args[1].type === 'ConstantNode' && right.args[1].value === 2) {
-                                const cosBase = right.args[0];
-                                if (cosBase.type === 'FunctionNode' && cosBase.name === 'cos' && cosBase.args.length === 1) {
-                                    const theta = cosBase.args[0].toString();
-                                    const toStr = math.parse(`sin(${theta})^2`).toString();
-                                    matches.push({start: s, end: e, from: sub, to: toStr});
-                                }
-                            }
-                        }
-                    }
-                    // tan^2(theta) + 1 = sec^2(theta)
-                    else if (r.from === 'tan(x)^2 + 1') {
-                        if (subAst.type === 'OperatorNode' && subAst.op === '+' && subAst.args.length === 2) {
-                            const [left, right] = subAst.args;
-                            if (right.type === 'ConstantNode' && right.value === 1 &&
-                                left.type === 'OperatorNode' && left.op === '^' && left.args.length === 2 && left.args[1].type === 'ConstantNode' && left.args[1].value === 2) {
-                                const tanBase = left.args[0];
-                                if (tanBase.type === 'FunctionNode' && tanBase.name === 'tan' && tanBase.args.length === 1) {
-                                    const theta = tanBase.args[0].toString();
-                                    const toStr = math.parse(`sec(${theta})^2`).toString();
-                                    matches.push({start: s, end: e, from: sub, to: toStr});
-                                }
-                            }
-                        }
-                    }
-                    // And so on for other identities... (similar pattern)
-                } catch(ex) { /* invalid */ }
-            }
-        }
-    }
-
-    // Parametric matching for Power Reducing
-    if (r.type === 'power_reducing') {
-        for (let s = 0; s < maxLen; s++) {
-            for (let e = s; e < maxLen; e++) {
-                const sub = blocks.slice(s, e + 1).join(' ');
-                try {
-                    const subAst = math.parse(sub);
-                    // sin^2(theta) = (1 - cos(2*theta))/2
-                    if (r.from === 'sin(x)^2') {
-                        if (subAst.type === 'OperatorNode' && subAst.op === '^' && subAst.args.length === 2 && subAst.args[1].type === 'ConstantNode' && subAst.args[1].value === 2) {
-                            const base = subAst.args[0];
-                            if (base.type === 'FunctionNode' && base.name === 'sin' && base.args.length === 1) {
-                                const theta = base.args[0].toString();
-                                const toStr = math.parse(`(1 - cos(2 * ${theta})) / 2`).toString();
-                                matches.push({start: s, end: e, from: sub, to: toStr});
-                            }
-                        }
-                    }
-                    // cos^2(theta) = (1 + cos(2*theta))/2
-                    else if (r.from === 'cos(x)^2') {
-                        if (subAst.type === 'OperatorNode' && subAst.op === '^' && subAst.args.length === 2 && subAst.args[1].type === 'ConstantNode' && subAst.args[1].value === 2) {
-                            const base = subAst.args[0];
-                            if (base.type === 'FunctionNode' && base.name === 'cos' && base.args.length === 1) {
-                                const theta = base.args[0].toString();
-                                const toStr = math.parse(`(1 + cos(2 * ${theta})) / 2`).toString();
-                                matches.push({start: s, end: e, from: sub, to: toStr});
-                            }
-                        }
-                    }
-                    // tan^2(theta) = (1 - cos(2*theta))/(1 + cos(2*theta))
-                    else if (r.from === 'tan(x)^2') {
-                        if (subAst.type === 'OperatorNode' && subAst.op === '^' && subAst.args.length === 2 && subAst.args[1].type === 'ConstantNode' && subAst.args[1].value === 2) {
-                            const base = subAst.args[0];
-                            if (base.type === 'FunctionNode' && base.name === 'tan' && base.args.length === 1) {
-                                const theta = base.args[0].toString();
-                                const toStr = math.parse(`(1 - cos(2 * ${theta})) / (1 + cos(2 * ${theta}))`).toString();
-                                matches.push({start: s, end: e, from: sub, to: toStr});
                             }
                         }
                     }
@@ -410,50 +426,6 @@ function findAllMatches(blocks, r) {
             }
         }
     }
-
-    // Parametric matching for Quotient
-    if (r.type === 'quotient') {
-        for (let s = 0; s < maxLen; s++) {
-            for (let e = s; e < maxLen; e++) {
-                const sub = blocks.slice(s, e + 1).join(' ');
-                try {
-                    const subAst = math.parse(sub);
-                    // tan(theta) = sin(theta)/cos(theta)
-                    if (r.from === 'tan(x)') {
-                        if (subAst.type === 'FunctionNode' && subAst.name === 'tan' && subAst.args.length === 1) {
-                            const theta = subAst.args[0].toString();
-                            const toStr = math.parse(`sin(${theta}) / cos(${theta})`).toString();
-                            matches.push({start: s, end: e, from: sub, to: toStr});
-                        }
-                    }
-                    // cot(theta) = cos(theta)/sin(theta)
-                    else if (r.from === 'cot(x)') {
-                        if (subAst.type === 'FunctionNode' && subAst.name === 'cot' && subAst.args.length === 1) {
-                            const theta = subAst.args[0].toString();
-                            const toStr = math.parse(`cos(${theta}) / sin(${theta})`).toString();
-                            matches.push({start: s, end: e, from: sub, to: toStr});
-                        }
-                    }
-                    // Reverse: sin(theta)/cos(theta) = tan(theta)
-                    else if (r.from === 'sin(x) / cos(x)') {
-                        if (subAst.type === 'OperatorNode' && subAst.op === '/' && subAst.args.length === 2) {
-                            const [num, den] = subAst.args;
-                            if (num.type === 'FunctionNode' && num.name === 'sin' && num.args.length === 1 &&
-                                den.type === 'FunctionNode' && den.name === 'cos' && den.args.length === 1 &&
-                                num.args[0].toString() === den.args[0].toString()) {
-                                const theta = num.args[0].toString();
-                                const toStr = math.parse(`tan(${theta})`).toString();
-                                matches.push({start: s, end: e, from: sub, to: toStr});
-                            }
-                        }
-                    }
-                    // Similar for cot
-                } catch(ex) { /* invalid */ }
-            }
-        }
-    }
-
-    // Add similar for other types as needed...
 
     // Prefer smallest ranges — remove supersets of existing matches
     matches.sort((a,b) => (a.end - a.start) - (b.end - b.start));
@@ -930,30 +902,11 @@ async function searchSteps(oldExpr, newExpr) {
     identityCategories.forEach(cat => {
         cat.ids.forEach(pair => {
             const r = { name: cat.name, from: math.parse(pair[0]).toString(), to: math.parse(pair[1]).toString() };
+            // Tag identity type for specialized matching if needed
             if (cat.name === 'Double Angle') r.type = 'double_angle';
-            if (cat.name === 'Pythagorean') r.type = 'pythagorean';
-            if (cat.name === 'Power Reducing') r.type = 'power_reducing';
-            if (cat.name === 'Quotient') r.type = 'quotient';
-            if (cat.name === 'Reciprocal') r.type = 'reciprocal';
-            if (cat.name === 'Cofunction') r.type = 'cofunction';
-            if (cat.name === 'Even / Odd') r.type = 'even_odd';
-            if (cat.name === 'Sum ↔ Product') r.type = 'sum_product';
-            if (cat.name === 'Logarithms') r.type = 'logarithms';
-            if (cat.name === 'Fractions') r.type = 'fractions';
-            if (cat.name === 'Half Angle') r.type = 'half_angle';
             rules.push(r);
             const rRev = { name: cat.name, from: math.parse(pair[1]).toString(), to: math.parse(pair[0]).toString() };
             if (cat.name === 'Double Angle') rRev.type = 'double_angle';
-            if (cat.name === 'Pythagorean') rRev.type = 'pythagorean';
-            if (cat.name === 'Power Reducing') rRev.type = 'power_reducing';
-            if (cat.name === 'Quotient') rRev.type = 'quotient';
-            if (cat.name === 'Reciprocal') rRev.type = 'reciprocal';
-            if (cat.name === 'Cofunction') rRev.type = 'cofunction';
-            if (cat.name === 'Even / Odd') rRev.type = 'even_odd';
-            if (cat.name === 'Sum ↔ Product') rRev.type = 'sum_product';
-            if (cat.name === 'Logarithms') rRev.type = 'logarithms';
-            if (cat.name === 'Fractions') rRev.type = 'fractions';
-            if (cat.name === 'Half Angle') rRev.type = 'half_angle';
             rules.push(rRev);
         });
     });
