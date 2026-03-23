@@ -107,6 +107,35 @@ const identityCategories = [
     }
 ];
 
+// ─── Variable Normalization ──────────────────────────────────
+function normalizeVars(exprStr) {
+    try {
+        const node = math.parse(exprStr);
+        const result = node.transform(function(n) {
+            if (n.type === 'SymbolNode') {
+                return new math.SymbolNode('x');
+            }
+            return n;
+        });
+        return result.toString();
+    } catch(e) {
+        return exprStr;
+    }
+}
+
+function getMainVar(exprStr) {
+    try {
+        const node = math.parse(exprStr);
+        const vars = new Set();
+        node.traverse(function(n) {
+            if (n.type === 'SymbolNode') vars.add(n.name);
+        });
+        return vars.size === 1 ? Array.from(vars)[0] : null;
+    } catch(e) {
+        return null;
+    }
+}
+
 // ─── Block Tokenizer ─────────────────────────────────────────
 // Splits a math.js toString() output into visual "blocks"
 // keeping function calls intact, separating parens & operators.
@@ -226,9 +255,8 @@ function renderMathRecursive(node) {
 // ─── AST-based Match Finding ─────────────────────────────────
 // Finds all contiguous block subsequences that match an identity
 // pattern when parsed. Returns array of {start, end, from, to}
-function findAllMatches(blocks, patA, patB) {
+function findAllMatches(blocks, r) {
     const matches = [];
-    const normA = patA, normB = patB;
     const maxLen = blocks.length;
 
     for (let s = 0; s < maxLen; s++) {
@@ -236,12 +264,106 @@ function findAllMatches(blocks, patA, patB) {
             const sub = blocks.slice(s, e + 1).join(' ');
             try {
                 const parsed = math.parse(sub).toString();
-                if (parsed === normA) {
-                    matches.push({start: s, end: e, from: normA, to: normB});
-                } else if (parsed === normB) {
-                    matches.push({start: s, end: e, from: normB, to: normA});
+                const parsedNorm = normalizeVars(parsed);
+                const fromNorm = normalizeVars(r.from);
+                if (parsedNorm === fromNorm) {
+                    const varName = getMainVar(sub);
+                    let to = r.to;
+                    if (varName && r.to.includes('x')) {
+                        to = r.to.replace(/x/g, varName);
+                    }
+                    matches.push({start: s, end: e, from: parsed, to: to});
+                } else if (parsedNorm === normalizeVars(r.to)) {
+                    const varName = getMainVar(sub);
+                    let from = r.from;
+                    if (varName && r.from.includes('x')) {
+                        from = r.from.replace(/x/g, varName);
+                    }
+                    matches.push({start: s, end: e, from: parsed, to: from});
                 }
             } catch(ex) { /* invalid sub-expr */ }
+        }
+    }
+
+    // Parametric matching for Double Angle
+    if (r.type === 'double_angle') {
+        for (let s = 0; s < maxLen; s++) {
+            for (let e = s; e < maxLen; e++) {
+                const sub = blocks.slice(s, e + 1).join(' ');
+                try {
+                    const subAst = math.parse(sub);
+                    // For sin(2*x) -> 2*sin(x)*cos(x)
+                    if (r.from === 'sin(2 * x)') {
+                        if (subAst.type === 'FunctionNode' && subAst.name === 'sin' && subAst.args.length === 1) {
+                            const arg = subAst.args[0];
+                            if (arg.type === 'OperatorNode' && arg.op === '*' && arg.args.length === 2) {
+                                const [left, right] = arg.args;
+                                if (left.type === 'ConstantNode' && left.value % 2 === 0 && left.value > 0) {
+                                    const c = left.value;
+                                    const exprStr = right.toString();
+                                    const toStr = math.parse(`2 * sin(${c/2} * ${exprStr}) * cos(${c/2} * ${exprStr})`).toString();
+                                    matches.push({start: s, end: e, from: sub, to: toStr});
+                                }
+                            }
+                        }
+                    }
+                    // For 2*sin(x)*cos(x) -> sin(2*x)
+                    else if (r.from === '2 * sin(x) * cos(x)') {
+                        if (subAst.type === 'OperatorNode' && subAst.op === '*' && subAst.args.length === 2) {
+                            const [left, right] = subAst.args;
+                            if (left.type === 'ConstantNode' && left.value === 2 && right.type === 'OperatorNode' && right.op === '*' && right.args.length === 2) {
+                                const [sinPart, cosPart] = right.args;
+                                if (sinPart.type === 'FunctionNode' && sinPart.name === 'sin' && sinPart.args.length === 1 &&
+                                    cosPart.type === 'FunctionNode' && cosPart.name === 'cos' && cosPart.args.length === 1) {
+                                    const expr = sinPart.args[0];
+                                    if (expr.toString() === cosPart.args[0].toString()) {
+                                        const exprStr = expr.toString();
+                                        const toStr = math.parse(`sin(2 * ${exprStr})`).toString();
+                                        matches.push({start: s, end: e, from: sub, to: toStr});
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    // For cos(2*x) -> cos^2 - sin^2
+                    else if (r.from === 'cos(2 * x)') {
+                        if (subAst.type === 'FunctionNode' && subAst.name === 'cos' && subAst.args.length === 1) {
+                            const arg = subAst.args[0];
+                            if (arg.type === 'OperatorNode' && arg.op === '*' && arg.args.length === 2) {
+                                const [left, right] = arg.args;
+                                if (left.type === 'ConstantNode' && left.value % 2 === 0 && left.value > 0) {
+                                    const c = left.value;
+                                    const exprStr = right.toString();
+                                    const toStr = math.parse(`cos(${c/2} * ${exprStr})^2 - sin(${c/2} * ${exprStr})^2`).toString();
+                                    matches.push({start: s, end: e, from: sub, to: toStr});
+                                }
+                            }
+                        }
+                    }
+                    // For cos^2 - sin^2 -> cos(2*x)
+                    else if (r.from === 'cos(x)^2 - sin(x)^2') {
+                        if (subAst.type === 'OperatorNode' && subAst.op === '-' && subAst.args.length === 2) {
+                            const [left, right] = subAst.args;
+                            if (left.type === 'OperatorNode' && left.op === '^' && left.args.length === 2 &&
+                                right.type === 'OperatorNode' && right.op === '^' && right.args.length === 2) {
+                                const [cosBase, cosExp] = left.args;
+                                const [sinBase, sinExp] = right.args;
+                                if (cosExp.type === 'ConstantNode' && cosExp.value === 2 &&
+                                    sinExp.type === 'ConstantNode' && sinExp.value === 2 &&
+                                    cosBase.type === 'FunctionNode' && cosBase.name === 'cos' && cosBase.args.length === 1 &&
+                                    sinBase.type === 'FunctionNode' && sinBase.name === 'sin' && sinBase.args.length === 1) {
+                                    const expr = cosBase.args[0];
+                                    if (expr.toString() === sinBase.args[0].toString()) {
+                                        const exprStr = expr.toString();
+                                        const toStr = math.parse(`cos(2 * ${exprStr})`).toString();
+                                        matches.push({start: s, end: e, from: sub, to: toStr});
+                                    }
+                                }
+                            }
+                        }
+                    }
+                } catch(ex) { /* invalid */ }
+            }
         }
     }
 
@@ -683,11 +805,11 @@ function getNeighbors(exprStr, rules) {
                 }
             } catch(e) {}
         } else {
-            const matches = findAllMatches(blocks, r.from, r.to);
+            const matches = findAllMatches(blocks, r);
             for (let m of matches) {
                 const res = applyMatch(exprStr, blocks, m);
                 if (res && res !== exprStr) {
-                    results.push({ expr: res, desc: `Apply ${r.name}: ${r.from} \u2192 ${r.to}`, cat: r.name });
+                    results.push({ expr: res, desc: `Apply ${r.name}: ${m.from} \u2192 ${m.to}`, cat: r.name });
                 }
             }
         }
@@ -719,8 +841,12 @@ async function searchSteps(oldExpr, newExpr) {
     const rules = [];
     identityCategories.forEach(cat => {
         cat.ids.forEach(pair => {
-            rules.push({ name: cat.name, from: math.parse(pair[0]).toString(), to: math.parse(pair[1]).toString() });
-            rules.push({ name: cat.name, from: math.parse(pair[1]).toString(), to: math.parse(pair[0]).toString() });
+            const r = { name: cat.name, from: math.parse(pair[0]).toString(), to: math.parse(pair[1]).toString() };
+            if (cat.name === 'Double Angle') r.type = 'double_angle';
+            rules.push(r);
+            const rRev = { name: cat.name, from: math.parse(pair[1]).toString(), to: math.parse(pair[0]).toString() };
+            if (cat.name === 'Double Angle') rRev.type = 'double_angle';
+            rules.push(rRev);
         });
     });
     algebraOps.forEach(op => rules.push({ name: op.name, isAlgebra: true, fn: op.fn }));
